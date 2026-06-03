@@ -1,7 +1,7 @@
 [project]
 name = "fortran-mcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "FORTRAN MCP tools to help AI agents keep things straight!"
 readme = "README.md"
 authors = [
     { name = "Chester Gingrich", email = "chester.gingrich@gmail.com" }
