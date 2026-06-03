@@ -63,7 +63,7 @@ class FortranLinter:
                 continue
                 
             # Check end of unit
-            end_match = re.match(r'^\s*end\s*(?:program|module|subroutine|function)?\b', line_no_comment, re.IGNORECASE)
+            end_match = re.match(r'^\s*end\s*(?:program|module|subroutine|function\b|$)', line_no_comment, re.IGNORECASE)
             if end_match:
                 if active_stack:
                     closed_unit = active_stack.pop()
@@ -268,7 +268,7 @@ class FortranLinter:
             start_idx = proc["start"]
             for j in range(start_idx, len(self.lines)):
                 curr_line = self._clean_line(self.lines[j])
-                end_match = re.match(r'^\s*end\s*(?:subroutine|function)?\b', curr_line, re.IGNORECASE)
+                end_match = re.match(r'^\s*end\s*(?:subroutine|function\b|$)', curr_line, re.IGNORECASE)
                 if end_match:
                     name_part = curr_line.split()
                     if len(name_part) > 2 and name_part[-1].lower() == proc["name"].lower():
@@ -297,6 +297,19 @@ class FortranLinter:
             for arg in args:
                 # Don't check '*' dummy arguments (alternative return labels in subroutines)
                 if arg == '*':
+                    continue
+                    
+                # Skip checking intent for dummy procedures or external statements
+                is_procedure = False
+                for line_no in range(start_idx, end_idx):
+                    line = self._clean_line(self.lines[line_no - 1])
+                    if not line:
+                        continue
+                    if re.search(r'\bprocedure\s*\([^)]*\)\s*(?:::\s*)?\b' + re.escape(arg) + r'\b', line, re.IGNORECASE) or \
+                       re.search(r'\bexternal\b.*\b' + re.escape(arg) + r'\b', line, re.IGNORECASE):
+                        is_procedure = True
+                        break
+                if is_procedure:
                     continue
                     
                 found_intent = False

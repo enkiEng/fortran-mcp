@@ -11,3 +11,9 @@ wheels/
 
 # Local workspace metadata
 .antigravitycli/
+
+# Fortran build files
+*.mod
+*.o
+bin/
+obj/
