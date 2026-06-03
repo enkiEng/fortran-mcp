@@ -6,6 +6,21 @@ class FortranLinter:
         self.code = code
         self.lines = code.splitlines()
         self.warnings: List[Dict[str, Any]] = []
+        self.fixed_comment_rx = re.compile(r'^[Cc\*](?:\s|[^\w]|$)[^\n]*')
+        
+        # Detect if fixed format
+        self.is_fixed_format = False
+        for i in range(min(50, len(self.lines))):
+            if self.fixed_comment_rx.match(self.lines[i]):
+                self.is_fixed_format = True
+                break
+
+    def _clean_line(self, line: str) -> str:
+        """Strips comments (both modern free-format ! and legacy fixed-format C/c/* at col 1) and whitespace."""
+        if self.is_fixed_format and self.fixed_comment_rx.match(line):
+            return ""
+        return line.split('!')[0].strip()
+
 
     def lint(self) -> List[Dict[str, Any]]:
         self.warnings = []
@@ -43,7 +58,7 @@ class FortranLinter:
         function_start_rx = re.compile(r'^\s*(?:[a-zA-Z_]\w*(?:\([^)]*\))?\s+)*(?:(?:pure|elemental|recursive)\s+)*function\s+([a-zA-Z_]\w*)', re.IGNORECASE)
         
         for i, line in enumerate(self.lines):
-            line_no_comment = line.split('!')[0].strip()
+            line_no_comment = self._clean_line(line)
             if not line_no_comment:
                 continue
                 
@@ -130,7 +145,7 @@ class FortranLinter:
             # Find declaration limit (e.g. contains or nested unit start)
             limit_idx = end_idx
             for j in range(start_idx, end_idx):
-                line = self.lines[j].split('!')[0].strip()
+                line = self._clean_line(self.lines[j])
                 if not line:
                     continue
                 if re.match(r'^\s*contains\b', line, re.IGNORECASE):
@@ -143,7 +158,7 @@ class FortranLinter:
             declared = False
             implicit_none_rx = re.compile(r'\bimplicit\s+none\b', re.IGNORECASE)
             for j in range(start_idx, limit_idx):
-                line = self.lines[j - 1].split('!')[0]
+                line = self._clean_line(self.lines[j - 1])
                 if implicit_none_rx.search(line):
                     declared = True
                     break
@@ -182,7 +197,7 @@ class FortranLinter:
     def check_obsolete_types(self):
         obsolete_type_rx = re.compile(r'\b(real|integer|complex|logical|character)\s*\*\s*([0-9]+)\b', re.IGNORECASE)
         for i, line in enumerate(self.lines):
-            line_no_comment = line.split('!')[0]
+            line_no_comment = self._clean_line(line)
             match = obsolete_type_rx.search(line_no_comment)
             if match:
                 t, p = match.groups()
@@ -215,7 +230,7 @@ class FortranLinter:
         )
         
         for i, line in enumerate(self.lines):
-            line_no_comment = line.split('!')[0].strip()
+            line_no_comment = self._clean_line(line)
             if not line_no_comment:
                 continue
                 
@@ -252,7 +267,7 @@ class FortranLinter:
         for proc in procedures:
             start_idx = proc["start"]
             for j in range(start_idx, len(self.lines)):
-                curr_line = self.lines[j].split('!')[0].strip()
+                curr_line = self._clean_line(self.lines[j])
                 end_match = re.match(r'^\s*end\s*(?:subroutine|function)?\b', curr_line, re.IGNORECASE)
                 if end_match:
                     name_part = curr_line.split()
@@ -286,8 +301,8 @@ class FortranLinter:
                     
                 found_intent = False
                 for line_no in range(start_idx, end_idx):
-                    line = self.lines[line_no - 1].split('!')[0]
-                    if not line.strip():
+                    line = self._clean_line(self.lines[line_no - 1])
+                    if not line:
                         continue
                     if not re.search(r'\bintent\s*\(', line, re.IGNORECASE):
                         continue
@@ -339,7 +354,7 @@ class FortranLinter:
         dimension_stmt_rx = re.compile(r'^\s*dimension\b', re.IGNORECASE)
 
         for i, line in enumerate(self.lines):
-            line_no_comment = line.split('!')[0]
+            line_no_comment = self._clean_line(line)
             if common_rx.search(line_no_comment):
                 self.warnings.append({
                     "line": i + 1,
