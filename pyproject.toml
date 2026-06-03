@@ -1,0 +1,21 @@
+[project]
+name = "fortran-mcp"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Chester Gingrich", email = "chester.gingrich@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastmcp>=3.3.1",
+    "fprettify>=0.3.7",
+]
+
+[project.scripts]
+fortran-mcp = "fortran_mcp.server:mcp.run"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
+
