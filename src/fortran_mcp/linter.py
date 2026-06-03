@@ -312,8 +312,8 @@ class FortranLinter:
                     })
 
     def check_fixed_format(self):
-        # Scan for lines starting with 'C' or '*' in column 1 followed by non-newline characters (classic fixed-format comments)
-        fixed_comment_rx = re.compile(r'^[Cc\*][\s\w]')
+        # Scan for lines starting with 'C' or '*' in column 1 followed by space/non-word (classic fixed-format comments)
+        fixed_comment_rx = re.compile(r'^[Cc\*](?:\s|[^\w]|$)[^\n]*')
         
         for i, line in enumerate(self.lines):
             # Only inspect first 20 lines to determine if fixed format warning should be triggered

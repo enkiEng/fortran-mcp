@@ -42,6 +42,11 @@ fortran-mcp/
 │       ├── __init__.py
 │       ├── linter.py           # Custom Fortran Linter engine
 │       └── server.py           # FastMCP tools definitions and entrypoint
+├── test/                       # Demonstration and verification test suite
+│   ├── unformatted_legacy.f90  # Non-compliant Fortran demonstration file
+│   ├── modern_compliant.f90    # Formatted, best-practice compliant Fortran file
+│   ├── illustrate_mcp_tools.py # Python script orchestrating the MCP tool calls
+│   └── README.md               # Test runner documentation
 └── dist/                       # Packaged python distributions (tar/wheel)
 ```
 

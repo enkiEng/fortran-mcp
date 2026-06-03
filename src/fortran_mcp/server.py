@@ -143,7 +143,7 @@ def format_file(file_path: str) -> str:
         
     try:
         # Run fprettify in-place
-        res = subprocess.run([fprettify_bin, "-i", file_path], capture_output=True, text=True)
+        res = subprocess.run([fprettify_bin, file_path], capture_output=True, text=True)
         if res.returncode != 0:
             return f"Formatting failed: {res.stderr}"
         return f"Success: File '{file_path}' formatted in-place using fprettify."
