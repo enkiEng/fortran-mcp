@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import subprocess
 import shutil
 import tempfile
@@ -596,6 +597,102 @@ end module c_bindings_mod
 """
     else:
         return f"Unknown design pattern '{pattern_name}'. Supported patterns: oop, generics, raii, callback, c_interop."
+
+@mcp.tool()
+def modernize_file(file_path: str, output_path: Optional[str] = None) -> str:
+    """Performs automated syntax replacements to jumpstart modernizing a legacy Fortran file.
+    Updates obsolete operators, converts legacy types, and formats spacing.
+    """
+    if not os.path.exists(file_path):
+        return f"Error: File not found at {file_path}"
+        
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+            
+        # 1. Replace relational operators
+        content = re.sub(r'\b\.eq\.\b', '==', content, flags=re.IGNORECASE)
+        content = re.sub(r'\b\.ne\.\b', '/=', content, flags=re.IGNORECASE)
+        content = re.sub(r'\b\.gt\.\b', '>',  content, flags=re.IGNORECASE)
+        content = re.sub(r'\b\.ge\.\b', '>=', content, flags=re.IGNORECASE)
+        content = re.sub(r'\b\.lt\.\b', '<',  content, flags=re.IGNORECASE)
+        content = re.sub(r'\b\.le\.\b', '<=', content, flags=re.IGNORECASE)
+        
+        # 2. Replace non-standard types
+        content = re.sub(r'\breal\s*\*\s*8\b', 'real(kind=dp)', content, flags=re.IGNORECASE)
+        content = re.sub(r'\binteger\s*\*\s*4\b', 'integer(kind=int32)', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bdouble\s+precision\b', 'real(kind=dp)', content, flags=re.IGNORECASE)
+        
+        # 3. Add kind imports if we did replacements
+        if 'kind=dp' in content and 'dp => real64' not in content:
+            # Try to insert at the beginning of the unit
+            content = re.sub(
+                r'(\bprogram\s+\w+|\bmodule\s+\w+)',
+                r'\1\n  use, intrinsic :: iso_fortran_env, only : dp => real64',
+                content,
+                count=1,
+                flags=re.IGNORECASE
+            )
+            
+        if not output_path:
+            base, ext = os.path.splitext(file_path)
+            output_path = f"{base}_modernized.f90"
+            
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+            
+        # Auto-format if fprettify is available
+        fprettify_bin = get_fprettify_path()
+        if fprettify_bin:
+            subprocess.run([fprettify_bin, output_path], capture_output=True)
+            
+        return f"Success: Automated modernization applied. Output saved to '{output_path}'."
+    except Exception as e:
+        return f"Error during modernization: {str(e)}"
+
+@mcp.tool()
+def verify_regression(legacy_exe_command: str, modern_exe_command: str) -> str:
+    """Runs a legacy binary and a modernized binary, comparing their outputs to verify that the refactoring has no regressions.
+    
+    Args:
+        legacy_exe_command: Shell command to run the legacy binary.
+        modern_exe_command: Shell command to run the modernized binary.
+    """
+    try:
+        # Run legacy
+        res_legacy = subprocess.run(legacy_exe_command, shell=True, capture_output=True, text=True)
+        # Run modern
+        res_modern = subprocess.run(modern_exe_command, shell=True, capture_output=True, text=True)
+        
+        report = []
+        report.append("=== Refactoring Regression Verification Report ===")
+        report.append(f"Legacy Command: '{legacy_exe_command}' (Exit: {res_legacy.returncode})")
+        report.append(f"Modern Command: '{modern_exe_command}' (Exit: {res_modern.returncode})")
+        
+        if res_legacy.returncode != res_modern.returncode:
+            report.append("❌ FAILURE: Exit codes do not match!")
+            
+        # Match output text
+        diff_detected = False
+        legacy_out = res_legacy.stdout.strip()
+        modern_out = res_modern.stdout.strip()
+        
+        if legacy_out != modern_out:
+            report.append("❌ WARNING: STDOUT outputs differ!")
+            report.append(f"Legacy Output:\n{legacy_out[:200]}...")
+            report.append(f"Modern Output:\n{modern_out[:200]}...")
+            diff_detected = True
+        else:
+            report.append("✅ SUCCESS: Standard outputs match exactly!")
+            
+        if res_legacy.returncode == 0 and res_modern.returncode == 0 and not diff_detected:
+            report.append("🎉 VERIFICATION PASSED: No regression detected.")
+        else:
+            report.append("⚠️ VERIFICATION WARNING: Differences detected in output or exit state.")
+            
+        return "\n".join(report)
+    except Exception as e:
+        return f"Error running verification: {str(e)}"
 
 if __name__ == "__main__":
     mcp.run()
