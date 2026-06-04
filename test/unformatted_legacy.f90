@@ -4,6 +4,20 @@ program legacy_test
   integer*4 :: i
   double precision :: y
   dimension x(10)
+  pointer (ptr_x, x_val)
+  parameter (pi = 3.14159d0)
+  data y /5.0d0/
+  
+  structure /vax_struct/
+    union
+      map
+        integer :: val1
+      end map
+      map
+        real :: val2
+      end map
+    end union
+  end structure
   
   x(1) = 3.14
   call process(x(1), y)

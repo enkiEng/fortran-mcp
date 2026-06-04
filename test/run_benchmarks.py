@@ -143,6 +143,19 @@ def main():
         if os.path.exists(mod_lmdif_file_local):
             os.remove(mod_lmdif_file_local)
 
+    # 3. RUN INTEROPERABILITY BINDING GENERATION TESTS
+    print("\n--- [3] Running Interoperability Binding Generation Tests ---")
+    interop_script = os.path.join(current_dir, "test_interop_run.py")
+    if os.path.exists(interop_script):
+        res = subprocess.run([sys.executable, interop_script])
+        if res.returncode != 0:
+            print("  ❌ FAILURE: Interoperability binding tests failed.")
+            failed = True
+        else:
+            print("  ✅ SUCCESS: Interoperability binding tests passed.")
+    else:
+        print("  ⚠️ Skipped: test_interop_run.py not found.")
+
     print("\n" + "=" * 60)
     if failed:
         print("   ❌ BENCHMARKS FAILED: Regression checks encountered errors.")

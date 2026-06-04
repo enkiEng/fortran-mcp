@@ -44,6 +44,9 @@ class FortranLinter:
         # Step 6: Check for obsolete/deprecated statements
         self.check_obsolete_constructs()
         
+        # Step 7: Check for legacy extensions (Cray pointers, DEC structures/unions)
+        self.check_legacy_extensions()
+        
         # Sort warnings by line number
         self.warnings.sort(key=lambda x: x["line"])
         return self.warnings
@@ -365,6 +368,8 @@ class FortranLinter:
         pause_rx = re.compile(r'\bpause\b', re.IGNORECASE)
         arithmetic_if_rx = re.compile(r'\bif\s*\(.*\)\s*[0-9]+\s*,\s*[0-9]+\s*,\s*[0-9]+\b', re.IGNORECASE)
         dimension_stmt_rx = re.compile(r'^\s*dimension\b', re.IGNORECASE)
+        data_stmt_rx = re.compile(r'^\s*data\b(?!\s*=|\s*\()', re.IGNORECASE)
+        parameter_stmt_rx = re.compile(r'^\s*parameter\s*\(', re.IGNORECASE)
 
         for i, line in enumerate(self.lines):
             line_no_comment = self._clean_line(line)
@@ -423,4 +428,64 @@ class FortranLinter:
                     "rule": "dimension_statement",
                     "severity": "warning",
                     "message": "Standalone DIMENSION statements are obsolete. Declare dimensions directly inside type statements, e.g. 'real :: x(10)'."
+                })
+            if data_stmt_rx.match(line_no_comment):
+                self.warnings.append({
+                    "line": i + 1,
+                    "code": line.strip(),
+                    "rule": "obsolete_data_statement",
+                    "severity": "warning",
+                    "message": "DATA statement is obsolescent. Use modern inline initialization (e.g. 'real :: x = 1.0') or parameterized constants ('real, parameter :: x = 1.0') instead."
+                })
+            if parameter_stmt_rx.match(line_no_comment):
+                self.warnings.append({
+                    "line": i + 1,
+                    "code": line.strip(),
+                    "rule": "legacy_parameter_statement",
+                    "severity": "info",
+                    "message": "Statement-style PARAMETER definition is legacy. Use modern inline parameter declaration, e.g. 'type, parameter :: name = value'."
+                })
+
+    def check_legacy_extensions(self):
+        cray_pointer_rx = re.compile(r'^\s*pointer\s*\(', re.IGNORECASE)
+        dec_structure_rx = re.compile(r'^\s*structure\s*/', re.IGNORECASE)
+        dec_end_structure_rx = re.compile(r'^\s*end\s*structure\b', re.IGNORECASE)
+        dec_union_rx = re.compile(r'^\s*union\b', re.IGNORECASE)
+        dec_end_union_rx = re.compile(r'^\s*end\s*union\b', re.IGNORECASE)
+        dec_map_rx = re.compile(r'^\s*map\b', re.IGNORECASE)
+        dec_end_map_rx = re.compile(r'^\s*end\s*map\b', re.IGNORECASE)
+
+        for i, line in enumerate(self.lines):
+            line_no_comment = self._clean_line(line)
+            if cray_pointer_rx.match(line_no_comment):
+                self.warnings.append({
+                    "line": i + 1,
+                    "code": line.strip(),
+                    "rule": "cray_pointer",
+                    "severity": "warning",
+                    "message": "Cray pointer detected. Cray pointers are non-standard and bypass compiler safety controls. Use standard Fortran pointers ('type, pointer :: ptr') or allocatable variables instead."
+                })
+            if dec_structure_rx.match(line_no_comment) or dec_end_structure_rx.match(line_no_comment):
+                self.warnings.append({
+                    "line": i + 1,
+                    "code": line.strip(),
+                    "rule": "dec_structure",
+                    "severity": "warning",
+                    "message": "DEC structure block detected. This is a non-standard legacy extension. Use standard Fortran derived types ('type') instead."
+                })
+            if dec_union_rx.match(line_no_comment) or dec_end_union_rx.match(line_no_comment):
+                self.warnings.append({
+                    "line": i + 1,
+                    "code": line.strip(),
+                    "rule": "dec_union",
+                    "severity": "warning",
+                    "message": "DEC union block detected. This is a non-standard legacy extension. Use standard Fortran derived types or pointers instead."
+                })
+            if dec_map_rx.match(line_no_comment) or dec_end_map_rx.match(line_no_comment):
+                self.warnings.append({
+                    "line": i + 1,
+                    "code": line.strip(),
+                    "rule": "dec_map",
+                    "severity": "warning",
+                    "message": "DEC map block detected. This is a non-standard legacy extension."
                 })
