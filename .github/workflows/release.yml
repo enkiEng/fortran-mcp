@@ -1,0 +1,47 @@
+name: Release
+
+# Build the wheel + sdist and attach them to the GitHub Release whenever a
+# version tag (e.g. v0.1.1) is pushed.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build and attach release artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.14"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+
+    - name: Build wheel and sdist
+      run: uv build
+
+    - name: Verify packaged data is present
+      run: |
+        python -m zipfile -l dist/*.whl | grep -q "fortran_mcp/design_patterns.md" \
+          && echo "OK: design_patterns.md is bundled in the wheel" \
+          || { echo "ERROR: design_patterns.md missing from wheel"; exit 1; }
+
+    - name: Publish GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          dist/*.whl
+          dist/*.tar.gz
+        generate_release_notes: true
