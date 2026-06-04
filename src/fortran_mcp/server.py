@@ -430,8 +430,14 @@ def run_tests(project_path: str) -> str:
 
 def extract_pattern_from_file(pattern_name: str) -> Optional[str]:
     """Helper to dynamically extract pattern sections from design_patterns.md in the workspace."""
-    # Absolute path to design_patterns.md in the workspace
-    file_path = "/Volumes/home/chest/fortran-mcp/design_patterns.md"
+    # Resolve design_patterns.md relative to the installed package (it ships at the
+    # repo root, two levels up from this module). Allow a FORTRAN_MCP_PATTERNS env
+    # override for non-standard deployment layouts.
+    file_path = os.environ.get("FORTRAN_MCP_PATTERNS")
+    if not file_path:
+        file_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "design_patterns.md")
+        )
     if not os.path.exists(file_path):
         return None
     try:
@@ -986,8 +992,23 @@ def suggest_refactoring(code: str, problem_description: Optional[str] = None) ->
 *   **Refactoring Guru Reference:** [Observer Pattern](https://refactoring.guru/design-patterns/observer)""")
 
     if not suggestions:
+        # No higher-level structural pattern matched. Before declaring the code
+        # modern, consult the linter so we don't give a false all-clear on files
+        # that still carry legacy syntax (real*8, missing intents, fixed-format).
+        lint_warnings = FortranLinter(code).lint()
+        if lint_warnings:
+            rules = sorted({w["rule"].lower() for w in lint_warnings})
+            return ("### Design Patterns & Refactoring Report\n\n"
+                    f"No higher-level structural refactoring pattern (COMMON, GOTO, solver "
+                    f"branching, long parameter lists, C-interop) was detected, but static "
+                    f"analysis flagged {len(lint_warnings)} legacy/style issue(s) "
+                    f"({', '.join(rules)}). **This code is not yet modern.**\n\n"
+                    "**Recommendation:** Run `lint_file` for the full report and `modernize_file` "
+                    "to auto-apply baseline fixes (explicit kinds, modern operators), then "
+                    "encapsulate procedures in modules with `implicit none` and explicit argument "
+                    "`intent` attributes.")
         return ("### Design Patterns & Refactoring Report\n\n"
-                "No legacy code warning flags matched. The code seems modern!\n\n"
+                "No legacy code warning flags matched and static analysis is clean. The code looks modern!\n\n"
                 "**General Recommendation:** Ensure you are encapsulating procedures inside modules, "
                 "specifying explicit intents, and disabling implicit typing with `implicit none`. "
                 "Explore structural design patterns such as [Facade](https://refactoring.guru/design-patterns/facade) "
