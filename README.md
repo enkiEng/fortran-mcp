@@ -57,15 +57,15 @@ fortran-mcp/
 This server uses the standard Python MCP SDK (`fastmcp`) and requires Python 3.14+ (or 3.10+ compatible environments) with `uv` or `pip`.
 
 ### 1. Add to Antigravity CLI
-The server is already registered in your local Antigravity config file at `/Volumes/home/chest/.gemini/antigravity-cli/mcp_config.json`:
+Add the server configuration to your local Antigravity config file at `~/.gemini/antigravity-cli/mcp_config.json`:
 ```json
 {
   "mcpServers": {
     "fortran-companion": {
-      "command": "/opt/homebrew/bin/uv",
+      "command": "uv",
       "args": [
         "--directory",
-        "/Volumes/home/chest/fortran-mcp",
+        "/path/to/fortran-mcp",
         "run",
         "fortran-mcp"
       ]
@@ -75,7 +75,7 @@ The server is already registered in your local Antigravity config file at `/Volu
 ```
 
 ### 2. Add to Claude Desktop
-To use this with Claude Desktop, insert the block below into your `claude_desktop_config.json` (typically under `~/Library/Application Support/Claude/` on macOS):
+To use this with Claude Desktop, insert the block below into your `claude_desktop_config.json` (typically under `~/Library/Application Support/Claude/` on macOS or `%APPDATA%/Claude/` on Windows):
 ```json
 {
   "mcpServers": {
@@ -83,7 +83,7 @@ To use this with Claude Desktop, insert the block below into your `claude_deskto
       "command": "uv",
       "args": [
         "--directory",
-        "/Volumes/home/chest/fortran-mcp",
+        "/path/to/fortran-mcp",
         "run",
         "fortran-mcp"
       ]
