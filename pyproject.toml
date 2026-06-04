@@ -1,6 +1,6 @@
 [project]
 name = "fortran-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "FORTRAN MCP tools to help AI agents keep things straight!"
 readme = "README.md"
 authors = [
