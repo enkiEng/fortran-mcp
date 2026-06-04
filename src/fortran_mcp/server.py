@@ -4,6 +4,7 @@ import re
 import subprocess
 import shutil
 import tempfile
+import importlib.resources
 from typing import Optional, List
 from fastmcp import FastMCP
 
@@ -428,11 +429,37 @@ def run_tests(project_path: str) -> str:
             
     return "Error: Could not find testing configuration. Please ensure either 'fpm.toml' or 'Makefile' is present."
 
+def _locate_patterns_file() -> Optional[str]:
+    """Locate design_patterns.md across editable and wheel installs.
+
+    Resolution order:
+      1. FORTRAN_MCP_PATTERNS env override (non-standard deployments).
+      2. The copy packaged inside fortran_mcp/ (works for wheel + editable installs).
+      3. Legacy fallback to the repo root (older source checkouts).
+    """
+    override = os.environ.get("FORTRAN_MCP_PATTERNS")
+    if override:
+        return override if os.path.exists(override) else None
+
+    # Packaged data file shipped alongside this module.
+    try:
+        resource = importlib.resources.files("fortran_mcp").joinpath("design_patterns.md")
+        if resource.is_file():
+            return str(resource)
+    except (ModuleNotFoundError, AttributeError, TypeError):
+        pass
+
+    # Legacy: file located at the repo root, two levels up from this module.
+    legacy = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "design_patterns.md")
+    )
+    return legacy if os.path.exists(legacy) else None
+
+
 def extract_pattern_from_file(pattern_name: str) -> Optional[str]:
-    """Helper to dynamically extract pattern sections from design_patterns.md in the workspace."""
-    # Absolute path to design_patterns.md in the workspace
-    file_path = "/Volumes/home/chest/fortran-mcp/design_patterns.md"
-    if not os.path.exists(file_path):
+    """Helper to dynamically extract pattern sections from the packaged design_patterns.md."""
+    file_path = _locate_patterns_file()
+    if not file_path or not os.path.exists(file_path):
         return None
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -986,8 +1013,23 @@ def suggest_refactoring(code: str, problem_description: Optional[str] = None) ->
 *   **Refactoring Guru Reference:** [Observer Pattern](https://refactoring.guru/design-patterns/observer)""")
 
     if not suggestions:
+        # No higher-level structural pattern matched. Before declaring the code
+        # modern, consult the linter so we don't give a false all-clear on files
+        # that still carry legacy syntax (real*8, missing intents, fixed-format).
+        lint_warnings = FortranLinter(code).lint()
+        if lint_warnings:
+            rules = sorted({w["rule"].lower() for w in lint_warnings})
+            return ("### Design Patterns & Refactoring Report\n\n"
+                    f"No higher-level structural refactoring pattern (COMMON, GOTO, solver "
+                    f"branching, long parameter lists, C-interop) was detected, but static "
+                    f"analysis flagged {len(lint_warnings)} legacy/style issue(s) "
+                    f"({', '.join(rules)}). **This code is not yet modern.**\n\n"
+                    "**Recommendation:** Run `lint_file` for the full report and `modernize_file` "
+                    "to auto-apply baseline fixes (explicit kinds, modern operators), then "
+                    "encapsulate procedures in modules with `implicit none` and explicit argument "
+                    "`intent` attributes.")
         return ("### Design Patterns & Refactoring Report\n\n"
-                "No legacy code warning flags matched. The code seems modern!\n\n"
+                "No legacy code warning flags matched and static analysis is clean. The code looks modern!\n\n"
                 "**General Recommendation:** Ensure you are encapsulating procedures inside modules, "
                 "specifying explicit intents, and disabling implicit typing with `implicit none`. "
                 "Explore structural design patterns such as [Facade](https://refactoring.guru/design-patterns/facade) "

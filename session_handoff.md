@@ -13,25 +13,25 @@ To remediate this, we have developed a local **Model Context Protocol (MCP) Serv
 
 ## 🛠️ Current Project State & Components
 
-1. **Custom Linter ([linter.py](file:///Volumes/home/chest/fortran-mcp/src/fortran_mcp/linter.py)):**
+1. **Custom Linter ([linter.py](src/fortran_mcp/linter.py)):**
    * Statically parses Fortran lines to detect legacy syntax warnings.
    * **Scope Popping Bug Fix (June 2026):** Fixed a critical scope parser bug where standard construct terminators (such as `end interface`, `end type`, `end select`, and `end do`) were falsely matched as scoping unit end boundaries, terminating subroutine scopes prematurely. It now strictly pops scopes only on standard unit terminators.
    * **F77 Comment-Stripping Fix (June 2026):** Added auto-detection for legacy fixed-format code. If the file contains F77 comment patterns (`c`, `C`, or `*` at column 1), it ignores them completely during scoping and procedure extraction, resolving linter false-positives on large legacy codebases.
    * **Dummy Procedure Filter (June 2026):** Excludes dummy procedures (declared via `procedure(...)`) and `external` declarations from `missing_intent` checks, as intents are illegal on procedures.
 
-2. **MCP Server Entrypoint ([server.py](file:///Volumes/home/chest/fortran-mcp/src/fortran_mcp/server.py)):**
+2. **MCP Server Entrypoint ([server.py](src/fortran_mcp/server.py)):**
    * Exposes MCP tools to lint, compile, and format code.
    * **New Modernization Tool (`modernize_file` - June 2026):** Performs AST/regex-based replacements on F77 files (converts `.eq.`, `.le.`, etc. to standard relational symbols, swaps `double precision` to parameterized kind constants `real(dp)`, injects `iso_fortran_env` imports, and runs `fprettify` to cleanly format).
    * **New Regression Tool (`verify_regression` - June 2026):** Standardizes verification by executing both a legacy binary and modernized binary, comparing output streams and exit status to guarantee no computational regressions occurred.
 
-3. **Design Patterns Documentation ([design_patterns.md](file:///Volumes/home/chest/fortran-mcp/design_patterns.md)):**
+3. **Design Patterns Documentation ([design_patterns.md](src/fortran_mcp/design_patterns.md)):**
    * A comprehensive architectural reference guide outlining how to implement Creational (Factory, Singleton), Structural (Adapter, Composite), and Behavioral (Strategy, Observer, Command) design patterns idiomatically in modern Fortran.
    * Contains a detailed guide on solving the **Object Sorting Problem** in Fortran using both Generic Polymorphic interfaces (`comparable_t`) and procedural Callback pointers, along with indirect index sorting to avoid deep copy bottlenecks.
 
-4. **Demonstration & Verification Test Suite ([test/](file:///Volumes/home/chest/fortran-mcp/test/)):**
-   * [lmdif.f](file:///Volumes/home/chest/fortran-mcp/test/lmdif.f): Baseline legacy F77 Levenberg-Marquardt solver from Netlib MINPACK containing 29 lint violations.
-   * [modern_lmdif.f90](file:///Volumes/home/chest/fortran-mcp/test/modern_lmdif.f90): Fully modernized F2018 free-form module version of the solver (0 lint violations, compiles cleanly with `-std=f2018` flags).
-   * [run_benchmarks.py](file:///Volumes/home/chest/fortran-mcp/test/run_benchmarks.py): Core regression testing script that asserts linter warnings on legacy files, validates compliant files, and verifies standard-compliant compilation.
+4. **Demonstration & Verification Test Suite ([test/](test/)):**
+   * [lmdif.f](test/lmdif.f): Baseline legacy F77 Levenberg-Marquardt solver from Netlib MINPACK containing 29 lint violations.
+   * [modern_lmdif.f90](test/modern_lmdif.f90): Fully modernized F2018 free-form module version of the solver (0 lint violations, compiles cleanly with `-std=f2018` flags).
+   * [run_benchmarks.py](test/run_benchmarks.py): Core regression testing script that asserts linter warnings on legacy files, validates compliant files, and verifies standard-compliant compilation.
 
 ---
 
