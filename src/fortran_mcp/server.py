@@ -2598,6 +2598,439 @@ def generate_python_interface(file_path: str, module_name: str) -> str:
     except Exception as e:
         return f"Error generating Python interface: {str(e)}"
 
+@mcp.tool()
+def project_metrics(project_path: str) -> str:
+    """Computes project-wide quality metrics and generates a 'legacy heatmap'.
+    Scans all Fortran files in the project, aggregates lines of code, comment density,
+    counts legacy constructs (COMMON, EQUIVALENCE, GOTO, etc.), and assigns a modernization score.
+    """
+    import os
+    import json
+    
+    if not os.path.isdir(project_path):
+        return f"Error: Project path not found or is not a directory: {project_path}"
+        
+    fortran_extensions = {".f90", ".f", ".f95", ".f03", ".f08", ".for", ".f77", ".ftn"}
+    
+    files_analyzed = 0
+    total_lines = 0
+    total_code = 0
+    total_comment = 0
+    total_empty = 0
+    
+    # Aggregated legacy counts
+    aggregated_rules = {}
+    
+    # Files details
+    per_file_metrics = []
+    
+    # Exclude typical build/venv directories
+    exclude_dirs = {".git", ".venv", "__pycache__", "build", "dist"}
+    
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        for file in files:
+            ext = os.path.splitext(file)[1].lower()
+            if ext in fortran_extensions:
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        code = f.read()
+                    
+                    linter = FortranLinter(code)
+                    metrics = linter.get_metrics()
+                    
+                    rel_path = os.path.relpath(file_path, project_path)
+                    
+                    files_analyzed += 1
+                    total_lines += metrics["lines_total"]
+                    total_code += metrics["lines_code"]
+                    total_comment += metrics["lines_comment"]
+                    total_empty += metrics["lines_empty"]
+                    
+                    for rule, count in metrics["rule_counts"].items():
+                        aggregated_rules[rule] = aggregated_rules.get(rule, 0) + count
+                        
+                    per_file_metrics.append({
+                        "file": rel_path,
+                        "lines_total": metrics["lines_total"],
+                        "lines_code": metrics["lines_code"],
+                        "lines_comment": metrics["lines_comment"],
+                        "lines_empty": metrics["lines_empty"],
+                        "modernization_score": metrics["modernization_score"],
+                        "warnings_count": metrics["warnings_count"],
+                        "modern_features": metrics["modern_features"]
+                    })
+                except Exception:
+                    pass
+                    
+    if files_analyzed == 0:
+        return "No Fortran files found in the specified project path."
+        
+    worst_offenders = sorted(per_file_metrics, key=lambda x: x["modernization_score"])[:10]
+    god_files = sorted(per_file_metrics, key=lambda x: x["lines_code"], reverse=True)[:10]
+    
+    avg_score = sum(x["modernization_score"] for x in per_file_metrics) / files_analyzed
+    
+    summary = {
+        "files_analyzed": files_analyzed,
+        "total_lines": total_lines,
+        "total_code": total_code,
+        "total_comment": total_comment,
+        "total_empty": total_empty,
+        "comment_density_pct": round((total_comment / total_lines * 100.0) if total_lines > 0 else 0.0, 1),
+        "average_modernization_score": round(avg_score, 1),
+        "aggregated_rule_violations": aggregated_rules,
+        "worst_offenders": [
+            {"file": x["file"], "score": x["modernization_score"], "code_lines": x["lines_code"]}
+            for x in worst_offenders
+        ],
+        "god_files": [
+            {"file": x["file"], "code_lines": x["lines_code"], "total_lines": x["lines_total"]}
+            for x in god_files
+        ]
+    }
+    
+    result = {
+        "summary": summary,
+        "per_file": per_file_metrics
+    }
+    
+    return json.dumps(result, indent=2)
+
+@mcp.tool()
+def dependency_graph(project_path: str) -> str:
+    """Computes module dependency graph and detects modules exposing mutable public state.
+    Scans all Fortran modules in the project, identifies 'use' statements (excluding standard intrinsics),
+    computes fan-in/fan-out metrics, and generates a Mermaid diagram representing the module hierarchy.
+    """
+    import os
+    import re
+    import json
+    
+    if not os.path.isdir(project_path):
+        return f"Error: Project path not found or is not a directory: {project_path}"
+        
+    fortran_extensions = {".f90", ".f", ".f95", ".f03", ".f08", ".for", ".f77", ".ftn"}
+    all_modules = {}
+    exclude_dirs = {".git", ".venv", "__pycache__", "build", "dist"}
+    
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        for file in files:
+            ext = os.path.splitext(file)[1].lower()
+            if ext in fortran_extensions:
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        code = f.read()
+                        
+                    linter = FortranLinter(code)
+                    rel_path = os.path.relpath(file_path, project_path)
+                    
+                    units = linter.find_scoping_units()
+                    module_units = [u for u in units if u["type"] == "module"]
+                    
+                    for u in module_units:
+                        mod_name = u["name"]
+                        mod_name_lower = mod_name.lower()
+                        start_line = u["start"]
+                        end_line = u["end"]
+                        
+                        limit_line = end_line
+                        for line_no in range(start_line, end_line):
+                            line = linter._clean_line(linter.lines[line_no - 1])
+                            if re.match(r'^\s*contains\b', line, re.IGNORECASE):
+                                limit_line = line_no
+                                break
+                                
+                        dependencies = set()
+                        public_vars = []
+                        is_default_private = False
+                        explicit_public_vars = set()
+                        explicit_private_vars = set()
+                        declared_vars = []
+                        
+                        use_rx = re.compile(r'^\s*use\s*(?:,\s*(?:non_)?intrinsic\s*::)?\s*([a-zA-Z_]\w*)', re.IGNORECASE)
+                        intrinsic_modules = {"iso_fortran_env", "iso_c_binding", "ieee_exceptions", "ieee_arithmetic", "ieee_features"}
+                        
+                        decl_rx = re.compile(r'^\s*(?:real|integer|logical|character|complex|type\s*\(\s*\w+\s*\))\b', re.IGNORECASE)
+                        private_stmt_rx = re.compile(r'^\s*private\b', re.IGNORECASE)
+                        public_stmt_rx = re.compile(r'^\s*public\b', re.IGNORECASE)
+                        
+                        for line_no in range(start_line, limit_line):
+                            line = linter._clean_line(linter.lines[line_no - 1])
+                            if not line:
+                                continue
+                                
+                            use_match = use_rx.match(line)
+                            if use_match:
+                                dep_name = use_match.group(1).lower()
+                                is_intrinsic = "intrinsic" in line.lower()
+                                if dep_name not in intrinsic_modules and not is_intrinsic:
+                                    dependencies.add(dep_name)
+                                continue
+                                
+                            if private_stmt_rx.match(line):
+                                parts = line.split('::')
+                                if len(parts) > 1:
+                                    vars_part = parts[1]
+                                    for v in re.findall(r'\b[a-zA-Z_]\w*\b', vars_part):
+                                        explicit_private_vars.add(v.lower())
+                                else:
+                                    if re.match(r'^\s*private\s*$', line, re.IGNORECASE):
+                                        is_default_private = True
+                                continue
+                                
+                            if public_stmt_rx.match(line):
+                                parts = line.split('::')
+                                if len(parts) > 1:
+                                    vars_part = parts[1]
+                                    for v in re.findall(r'\b[a-zA-Z_]\w*\b', vars_part):
+                                        explicit_public_vars.add(v.lower())
+                                continue
+                                
+                            if decl_rx.match(line):
+                                is_param = "parameter" in line.lower()
+                                is_decl_private = "private" in line.lower()
+                                is_decl_public = "public" in line.lower()
+                                
+                                parts = line.split('::')
+                                vars_part = parts[1] if len(parts) > 1 else line
+                                vars_part_no_init = re.sub(r'=[^,]*', '', vars_part)
+                                names = re.findall(r'\b[a-zA-Z_]\w*\b', vars_part_no_init)
+                                
+                                for name in names:
+                                    name_lower = name.lower()
+                                    declared_vars.append({
+                                        "name": name_lower,
+                                        "is_parameter": is_param,
+                                        "is_private": is_decl_private,
+                                        "is_public": is_decl_public
+                                    })
+                                    
+                        for var in declared_vars:
+                            name_lower = var["name"]
+                            if var["is_parameter"]:
+                                continue
+                            is_private = var["is_private"]
+                            if not is_private:
+                                if name_lower in explicit_private_vars:
+                                    is_private = True
+                                elif is_default_private and name_lower not in explicit_public_vars:
+                                    is_private = True
+                            if not is_private:
+                                public_vars.append(name_lower)
+                                
+                        all_modules[mod_name_lower] = {
+                            "name": mod_name,
+                            "file": rel_path,
+                            "dependencies": sorted(list(dependencies)),
+                            "exposes_mutable_public_state": len(public_vars) > 0,
+                            "public_variables": public_vars,
+                            "fan_in": 0,
+                            "fan_out": len(dependencies)
+                        }
+                except Exception:
+                    pass
+                    
+    project_module_names = set(all_modules.keys())
+    for mod_lower, mod_info in all_modules.items():
+        valid_deps = [d for d in mod_info["dependencies"] if d in project_module_names]
+        mod_info["dependencies"] = valid_deps
+        mod_info["fan_out"] = len(valid_deps)
+        
+    for mod_lower, mod_info in all_modules.items():
+        for dep in mod_info["dependencies"]:
+            if dep in all_modules:
+                all_modules[dep]["fan_in"] += 1
+                
+    keystones = sorted(
+        [info for name, info in all_modules.items()],
+        key=lambda x: x["fan_in"],
+        reverse=True
+    )
+    
+    mermaid_lines = ["graph TD"]
+    for mod_lower, mod_info in all_modules.items():
+        style = ""
+        if mod_info["exposes_mutable_public_state"]:
+            style = f"style {mod_info['name']} fill:#ffdddd,stroke:#ff5555,stroke-width:2px"
+            
+        mermaid_lines.append(f"    {mod_info['name']}")
+        if style:
+            mermaid_lines.append(f"    {style}")
+            
+        for dep in mod_info["dependencies"]:
+            dep_name = all_modules[dep]["name"]
+            mermaid_lines.append(f"    {mod_info['name']} --> {dep_name}")
+            
+    mermaid_graph = "\n".join(mermaid_lines)
+    
+    result = {
+        "modules": all_modules,
+        "keystones": [
+            {"name": x["name"], "fan_in": x["fan_in"], "fan_out": x["fan_out"], "exposes_mutable_public_state": x["exposes_mutable_public_state"]}
+            for x in keystones
+        ],
+        "mermaid": mermaid_graph
+    }
+    
+    return json.dumps(result, indent=2)
+
+@mcp.tool()
+def find_large_units(project_path: str) -> str:
+    """Detects oversized procedures and modules (complexity / 'god-unit' analysis).
+    Analyzes physical lines, actual code lines, maximum control-flow nesting depth,
+    and SELECT CASE arity across the project. Highly useful for detecting decomposition targets.
+    """
+    import os
+    import re
+    import json
+    
+    if not os.path.isdir(project_path):
+        return f"Error: Project path not found or is not a directory: {project_path}"
+        
+    fortran_extensions = {".f90", ".f", ".f95", ".f03", ".f08", ".for", ".f77", ".ftn"}
+    
+    large_units = []
+    exclude_dirs = {".git", ".venv", "__pycache__", "build", "dist"}
+    
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        for file in files:
+            ext = os.path.splitext(file)[1].lower()
+            if ext in fortran_extensions:
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        code = f.read()
+                        
+                    linter = FortranLinter(code)
+                    rel_path = os.path.relpath(file_path, project_path)
+                    
+                    units = linter.find_scoping_units()
+                    procedures = linter.find_procedures()
+                    
+                    def get_code_lines_count(start, end):
+                        count = 0
+                        for idx in range(start - 1, end):
+                            line = linter.lines[idx]
+                            stripped = line.strip()
+                            if not stripped:
+                                continue
+                            if linter.is_fixed_format and linter.fixed_comment_rx.match(line):
+                                continue
+                            if stripped.startswith('!'):
+                                continue
+                            count += 1
+                        return count
+                        
+                    for u in units:
+                        if u["type"] in ["module", "program"]:
+                            start = u["start"]
+                            end = u["end"]
+                            total_lines = end - start + 1
+                            code_lines = get_code_lines_count(start, end)
+                            
+                            large_units.append({
+                                "name": u["name"],
+                                "type": u["type"],
+                                "file": rel_path,
+                                "line_start": start,
+                                "line_end": end,
+                                "lines_total": total_lines,
+                                "lines_code": code_lines,
+                                "max_nesting_depth": 0,
+                                "select_case_count": 0,
+                                "max_select_case_arity": 0
+                            })
+                            
+                    for proc in procedures:
+                        start = proc["start"]
+                        end = proc["end"]
+                        total_lines = end - start + 1
+                        code_lines = get_code_lines_count(start, end)
+                        
+                        max_depth = 0
+                        current_depth = 0
+                        select_case_count = 0
+                        max_select_case_arity = 0
+                        select_case_stack = []
+                        
+                        block_start_rx = re.compile(r'^\s*block\b', re.IGNORECASE)
+                        associate_start_rx = re.compile(r'^\s*associate\b', re.IGNORECASE)
+                        select_case_start_rx = re.compile(r'^\s*select\s*case\b', re.IGNORECASE)
+                        do_start_rx = re.compile(r'^\s*(?:\w+\s*:)?\s*do\b', re.IGNORECASE)
+                        if_then_rx = re.compile(r'^\s*(?:\w+\s*:)?\s*if\s*\(.*\)\s*then\b', re.IGNORECASE)
+                        
+                        end_block_rx = re.compile(r'^\s*end\s*block\b', re.IGNORECASE)
+                        end_associate_rx = re.compile(r'^\s*end\s*associate\b', re.IGNORECASE)
+                        end_select_rx = re.compile(r'^\s*end\s*select\b', re.IGNORECASE)
+                        end_do_rx = re.compile(r'^\s*end\s*do\b', re.IGNORECASE)
+                        end_if_rx = re.compile(r'^\s*end\s*if\b', re.IGNORECASE)
+                        
+                        case_rx = re.compile(r'^\s*case\b', re.IGNORECASE)
+                        
+                        for line_no in range(start, end + 1):
+                            line = linter._clean_line(linter.lines[line_no - 1])
+                            if not line:
+                                continue
+                                
+                            if select_case_start_rx.match(line):
+                                select_case_count += 1
+                                select_case_stack.append(0)
+                                current_depth += 1
+                                if current_depth > max_depth:
+                                    max_depth = current_depth
+                                continue
+                                
+                            if end_select_rx.match(line):
+                                if select_case_stack:
+                                    arity = select_case_stack.pop()
+                                    if arity > max_select_case_arity:
+                                        max_select_case_arity = arity
+                                current_depth = max(0, current_depth - 1)
+                                continue
+                                
+                            if case_rx.match(line):
+                                if select_case_stack:
+                                    select_case_stack[-1] += 1
+                                continue
+                                
+                            if block_start_rx.match(line) or associate_start_rx.match(line) or do_start_rx.match(line) or if_then_rx.match(line):
+                                current_depth += 1
+                                if current_depth > max_depth:
+                                    max_depth = current_depth
+                                continue
+                                
+                            if end_block_rx.match(line) or end_associate_rx.match(line) or end_do_rx.match(line) or end_if_rx.match(line):
+                                current_depth = max(0, current_depth - 1)
+                                continue
+                                
+                        while select_case_stack:
+                            arity = select_case_stack.pop()
+                            if arity > max_select_case_arity:
+                                max_select_case_arity = arity
+                                
+                        large_units.append({
+                            "name": proc["name"],
+                            "type": proc["type"],
+                            "file": rel_path,
+                            "line_start": start,
+                            "line_end": end,
+                            "lines_total": total_lines,
+                            "lines_code": code_lines,
+                            "max_nesting_depth": max_depth,
+                            "select_case_count": select_case_count,
+                            "max_select_case_arity": max_select_case_arity
+                        })
+                except Exception:
+                    pass
+                    
+    ranked_units = sorted(large_units, key=lambda x: x["lines_total"], reverse=True)
+    return json.dumps(ranked_units, indent=2)
+
 if __name__ == "__main__":
     mcp.run()
 
