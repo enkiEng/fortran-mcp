@@ -156,6 +156,53 @@ def main():
     else:
         print("  ⚠️ Skipped: test_interop_run.py not found.")
 
+    # 4. RUN NEW ENHANCEMENTS TESTS
+    print("\n--- [4] Running New MCP Tools (Metrics, Dependencies, Large Units) ---")
+    try:
+        from fortran_mcp.server import project_metrics, dependency_graph, find_large_units
+        import json
+        
+        project_path = os.path.abspath(os.path.join(current_dir, ".."))
+        
+        # Test project_metrics
+        print("Running project_metrics...")
+        metrics_raw = project_metrics(project_path)
+        metrics_data = json.loads(metrics_raw)
+        print(f"  Files analyzed: {metrics_data['summary']['files_analyzed']}")
+        print(f"  Average modernization score: {metrics_data['summary']['average_modernization_score']}")
+        if metrics_data['summary']['files_analyzed'] > 0:
+            print("  ✅ project_metrics passed.")
+        else:
+            print("  ❌ project_metrics failed: no files analyzed.")
+            failed = True
+            
+        # Test dependency_graph
+        print("Running dependency_graph...")
+        dep_raw = dependency_graph(project_path)
+        dep_data = json.loads(dep_raw)
+        print(f"  Modules found: {len(dep_data['modules'])}")
+        print(f"  Keystone modules count: {len(dep_data['keystones'])}")
+        if len(dep_data['modules']) > 0:
+            print("  ✅ dependency_graph passed.")
+        else:
+            print("  ❌ dependency_graph failed: no modules found.")
+            failed = True
+            
+        # Test find_large_units
+        print("Running find_large_units...")
+        units_raw = find_large_units(project_path)
+        units_data = json.loads(units_raw)
+        print(f"  Large/Total units found: {len(units_data)}")
+        if len(units_data) > 0:
+            print("  ✅ find_large_units passed.")
+        else:
+            print("  ❌ find_large_units failed: no units found.")
+            failed = True
+            
+    except Exception as e:
+        print(f"  ❌ FAILURE testing new MCP tools: {str(e)}")
+        failed = True
+
     print("\n" + "=" * 60)
     if failed:
         print("   ❌ BENCHMARKS FAILED: Regression checks encountered errors.")

@@ -489,3 +489,109 @@ class FortranLinter:
                     "severity": "warning",
                     "message": "DEC map block detected. This is a non-standard legacy extension."
                 })
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """Calculates line counts, legacy constructs counts, modern features counts, and a modernization score."""
+        lines_total = len(self.lines)
+        lines_comment = 0
+        lines_empty = 0
+        
+        for line in self.lines:
+            stripped = line.strip()
+            if not stripped:
+                lines_empty += 1
+            elif self.is_fixed_format and self.fixed_comment_rx.match(line):
+                lines_comment += 1
+            elif stripped.startswith('!'):
+                lines_comment += 1
+                
+        lines_code = lines_total - lines_comment - lines_empty
+        
+        # Run linting to get warnings
+        warnings = self.lint()
+        
+        # Count warnings by rule
+        rule_counts = {}
+        for w in warnings:
+            rule = w.get("rule")
+            if rule:
+                rule_counts[rule] = rule_counts.get(rule, 0) + 1
+                
+        # Count modern features
+        derived_types_count = 0
+        allocatable_count = 0
+        pointer_count = 0
+        pure_count = 0
+        elemental_count = 0
+        
+        # Regexes for modern features
+        type_def_rx = re.compile(r'^\s*type\s+(?!precision\b|is\b|default\b)(?:::\s*)?([a-zA-Z_]\w*)', re.IGNORECASE)
+        for line in self.lines:
+            clean = self._clean_line(line)
+            if not clean:
+                continue
+            
+            if type_def_rx.match(clean) and not re.match(r'^\s*end\s*type\b', clean, re.IGNORECASE):
+                if not re.match(r'^\s*type\s*\([^)]*\)', clean, re.IGNORECASE):
+                    derived_types_count += 1
+                    
+            if re.search(r'\ballocatable\b', clean, re.IGNORECASE):
+                allocatable_count += 1
+            if re.search(r'\bpointer\b', clean, re.IGNORECASE) and not re.search(r'\bpointer\s*\(', clean, re.IGNORECASE):
+                pointer_count += 1
+                
+        # Count pure/elemental in procedure headers
+        procedures = self.find_procedures()
+        for proc in procedures:
+            start_line_text = self.lines[proc["start"] - 1].lower()
+            if "pure" in start_line_text:
+                pure_count += 1
+            if "elemental" in start_line_text:
+                elemental_count += 1
+                
+        # Calculate modernization score
+        score = 100.0
+        
+        # Deductions
+        missing_implicit_none = rule_counts.get("missing_implicit_none", 0)
+        score -= min(30.0, missing_implicit_none * 15.0)
+        
+        score -= rule_counts.get("common_block", 0) * 10.0
+        score -= rule_counts.get("equivalence", 0) * 10.0
+        score -= min(25.0, rule_counts.get("goto", 0) * 5.0)
+        score -= rule_counts.get("assigned_goto", 0) * 10.0
+        score -= rule_counts.get("pause", 0) * 10.0
+        score -= rule_counts.get("arithmetic_if", 0) * 10.0
+        score -= rule_counts.get("dimension_statement", 0) * 5.0
+        score -= rule_counts.get("obsolete_data_statement", 0) * 5.0
+        score -= rule_counts.get("obsolete_types", 0) * 5.0
+        score -= rule_counts.get("cray_pointer", 0) * 15.0
+        score -= rule_counts.get("dec_structure", 0) * 10.0
+        score -= rule_counts.get("dec_union", 0) * 10.0
+        score -= rule_counts.get("dec_map", 0) * 10.0
+        
+        missing_intent = rule_counts.get("missing_intent", 0)
+        score -= min(20.0, missing_intent * 2.0)
+        
+        score = max(0.0, min(100.0, score))
+        
+        units = self.find_scoping_units()
+        if not units and not procedures and lines_code == 0:
+            score = 100.0
+            
+        return {
+            "lines_total": lines_total,
+            "lines_code": lines_code,
+            "lines_comment": lines_comment,
+            "lines_empty": lines_empty,
+            "modernization_score": round(score, 1),
+            "warnings_count": len(warnings),
+            "rule_counts": rule_counts,
+            "modern_features": {
+                "derived_types": derived_types_count,
+                "allocatable": allocatable_count,
+                "pointer": pointer_count,
+                "pure_procedures": pure_count,
+                "elemental_procedures": elemental_count
+            }
+        }
