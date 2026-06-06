@@ -16,7 +16,11 @@ hit and a sketch of the proposed tool/enhancement.
 
 ## High-value new tools / enhancements
 
-### 1. Project-wide metrics & "legacy heatmap"  (biggest gap)
+> **Items 1–3 below were implemented in `afff5ba`** as the `project_metrics`,
+> `dependency_graph`, and `find_large_units` MCP tools. They are kept here for context
+> (the gap each one closed); see the tools themselves for current behavior.
+
+### 1. Project-wide metrics & "legacy heatmap"  (biggest gap) — ✅ Implemented (`afff5ba`, `project_metrics`)
 All current analysis is per-file (`lint_file`) or per-directory (`audit_implicit_interfaces`).
 Reviewing a ~390-file codebase required hand-rolling a sweep to compute per-file metrics and
 aggregates. Promote that into a first-class tool.
@@ -27,7 +31,7 @@ numbered-do / non-standard types / derived types / `pure` / `elemental` / alloca
 missing-`intent` count, a composite *modernization score*, plus ranked worst-offenders and
 "god-files". Output JSON/CSV so agents can aggregate without re-parsing source.
 
-### 2. Module dependency / use-graph + global-state detection
+### 2. Module dependency / use-graph + global-state detection — ✅ Implemented (`afff5ba`, `dependency_graph`)
 There is no way to see the module `use` graph. Finding the architectural keystones required
 building the graph by hand — and the highest-value finding (a few mutable global-state modules
 depended on by ~60% of files) fell straight out of fan-in analysis.
@@ -36,7 +40,7 @@ depended on by ~60% of files) fell straight out of fan-in analysis.
 module, ranked keystone modules, and a flag for modules that expose **mutable public state**
 (the dominant coupling/testability/parallelism smell). Optionally emit DOT/Mermaid.
 
-### 3. Complexity / "god-unit" detection
+### 3. Complexity / "god-unit" detection — ✅ Implemented (`afff5ba`, `find_large_units`)
 Oversized procedures and modules dominate the maintainability problem (e.g., a single 2000-line
 subroutine built around a ~80-way `SELECT CASE`). These had to be found by manual profiling.
 
