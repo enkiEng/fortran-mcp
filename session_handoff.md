@@ -5,6 +5,23 @@ documents the current status of the project. Last reconciled against the code on
 **2026-06-25** (v0.2.0, `main` clean and up to date with `origin/main`; no open PRs; the only
 remote branch is `origin/main`).
 
+> **Last session (2026-06-25):** reconciled this handoff with the code; evaluated **fparser2**
+> as an AST backend (ran a coverage spike — 100% parse on one large modern codebase, ~100% on a
+> second after preprocessing) and **adopted it**; shipped the `validate_syntax` /
+> `validate_syntax_file` tools with CI coverage; expanded the README (How It Works / Who It's For
+> / 26-tool catalog); and added a prioritized backlog with build order to `docs/FEATURE_IDEAS.md`.
+> **Work is deferred to a future session** — `main` is shippable; no PR opened yet. The next
+> build is **#6 (pure-candidate blocker reporting)** — see Next Tasks.
+>
+> **⚠️ Pushing:** this repo's `origin` is `enkiEng/fortran-mcp`; the machine's default `gh`
+> account is `NRCgg`, which **lacks write access** (push fails with 403). Before pushing:
+> `gh auth switch --hostname github.com --user enkiEng` → push → switch back to `NRCgg`.
+>
+> **⚠️ Names:** do **not** mention the real evaluation codebases or the internal analysis tool by
+> name in any tracked repo file — refer to them generically ("a large modern codebase", "a
+> field-used analysis tool"). These local session notes are the only place names may appear, and
+> even here they're kept generic.
+
 ---
 
 ## 🎯 Context & Goal
@@ -103,26 +120,39 @@ Client agents use it to self-correct their code in a loop before presenting it t
 ---
 
 ## 🎯 Next Tasks
-The live, prioritized backlog is now **[docs/FEATURE_IDEAS.md](docs/FEATURE_IDEAS.md)**, derived
-from exercising the server against a ~490k-LOC real codebase. Status:
+The live, prioritized backlog is **[docs/FEATURE_IDEAS.md](docs/FEATURE_IDEAS.md)** — it now
+carries a **Prioritization & build order** section (the methodology + tiered sequence). The
+`#1–#9` numbers there are stable identifiers, *not* a ranking; tiers are the ranking.
 
-* ✅ **Done:** CI benchmark integration; FEATURE_IDEAS items 1–3 (`project_metrics`,
-  `dependency_graph`, `find_large_units`); **fparser2 AST backend evaluated + adopted** —
-  `validate_syntax`/`validate_syntax_file` shipped. Coverage spike against two large modern
-  codebases: fparser2 parsed **100%** of the first (~395 files / ~489k LOC) and, after
-  preprocessing, ~100% of the second (its only raw failures were unexpanded cpp macros, not
-  grammar-ceiling issues). This makes fparser2 the recommended **analysis** backend (not a
-  format-preserving rewriter — keep `modernize_file` on regex/fprettify).
-* ⏳ **Open (high value):**
-  * **#6 Pure-candidate blocker reporting** — make `analyze_pure_candidates` report *why* a
-    procedure isn't pure (I/O, global/module-state writes, pointer aliasing, missing `intent`).
-    **Best built on the new fparser2 AST** (blockers map to node types) rather than regex.
-  * **#4 Higher-signal `suggest_refactoring` detectors** — module-level mutable public state,
-    pointer-to-global aliasing, repeated `SELECT CASE` dispatch matrices, string-keyed field
-    accessors.
-  * **#5 Characterization-test scaffolding** — a `scaffold_characterization_test` mode that pins
-    current output within tolerance (FRUIT/Julienne), pairing with `verify_regression`.
-* ⏳ **Open (smaller):** expand linter rules (Cray pointers, DEC unions, obsolescent `DATA`
-  initialization); fprettify config passthrough (line length / indent) on the format tools;
-  `modernize_file` handling of cpp-laced fixed-format source; README note on which tools accept
-  directories vs. single files.
+**✅ Done (recent):** CI benchmark integration; FEATURE_IDEAS items 1–3 (`project_metrics`,
+`dependency_graph`, `find_large_units`); **fparser2 AST backend evaluated + adopted** —
+`validate_syntax`/`validate_syntax_file` shipped with CI coverage. Coverage spike across two
+large modern codebases: 100% parse on the first (~395 files / ~489k LOC), ~100% on the second
+after preprocessing (its only raw failures were unexpanded cpp macros, not grammar-ceiling
+issues). fparser2 is the recommended **analysis** backend — *not* a format-preserving rewriter,
+so keep `modernize_file` on regex/fprettify.
+
+**▶️ Build order (from FEATURE_IDEAS — start at the top):**
+1. **Tier 1 · #6 Pure-candidate blocker reporting** *(next build)* — make `analyze_pure_candidates`
+   report *why* a procedure isn't pure (I/O, global/module-state writes, pointer aliasing, missing
+   `intent`). Per-procedure, **built on the fparser2 AST** (blockers map to node types); chosen as
+   next because it's tractable, high-confidence, and proves the AST-analysis pattern before the
+   hard cross-module work.
+2. **Tier 1 · `modernize_file` cpp handling** — now cheap: reuse the `_preprocess_source` helper
+   already built for `validate_syntax` (in `server.py`) instead of mangling cpp/fixed-format source.
+3. **Tier 2 · #5 Characterization-test scaffolding** — `scaffold_characterization_test` mode that
+   pins current output within tolerance (FRUIT/Julienne); pairs with `verify_regression`.
+4. **Tier 2 · #4 Higher-signal `suggest_refactoring` detectors** — scope to the *new* levers
+   (pointer-to-global aliasing, string-keyed accessors); mutable-public-state and `SELECT CASE`
+   arity are already partly covered by `dependency_graph` / `find_large_units`.
+5. **Tier 3 · #7 Call graph + call-path queries** — biggest *capability* gap (we only build the
+   module-`use` graph today), but highest effort/risk: needs cross-module symbol binding fparser2
+   does **not** provide. Defer until #6 validates the approach.
+6. **Tier 3 · #8 Dead-code & dangling references** — gated on #7.
+7. **Tier 4 · #9 USE hygiene & recursion sanity**, plus smaller items: expand linter rules (Cray
+   pointers, DEC unions, obsolescent `DATA` init); fprettify config passthrough (line length /
+   indent); README note on which tools accept directories vs. single files.
+
+**Cross-cutting (opportunistic):** migrate existing regex analysis tools (`dependency_graph`,
+`find_large_units`) onto fparser2 for accuracy as they're touched, keeping a regex fallback for
+files that fail to parse.
