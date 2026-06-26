@@ -74,6 +74,49 @@ purification effort is *why not*. Enhance it to name the specific blocker per pr
 write to global/module state, aliasing through module pointers, or a missing `intent`. (Converting
 side-effecting routines to `pure`/`do concurrent` is a common, high-value modernization goal.)
 
+## Whole-program graph analyses
+
+Derived from evaluating a mature, field-used whole-program Fortran analysis tool against the
+same class of large codebase. That tool is a regex-based *relationship/call-graph analyzer*
+(not a parser) hardwired to one project's layout — but its battery of reports is a validated
+catalog of the analyses that matter at scale. Several map onto tools we already have
+(`dependency_graph` ≈ its module-use graph, `audit_implicit_interfaces` ≈ its missing-implicit-none
+report, `find_large_units`, `project_metrics`); the items below are the gaps it exposes that we do
+**not** yet cover. All of these are best built on the fparser2 AST (now a dependency) rather than
+regex — that gives the same analyses with grammar-accurate scope/call resolution, and generically
+(not tied to any one project's directory conventions).
+
+### 7. Call graph + call-path queries (biggest gap)
+We build the module **`use`** graph (`dependency_graph`) but not a **call** graph. Add per-procedure
+caller/callee edges and the ability to answer "what calls X", "what does X call", and "show the
+call path(s) from A to B". This is the single most-used capability of the reference tool and the
+keystone for impact analysis, refactor blast-radius, and understanding an unfamiliar codebase.
+
+**Proposed:** `call_graph(project_path)` returning caller/callee edges per procedure (with fan-in/
+fan-out and recursion flags), and `call_paths(project_path, source, target)` returning the
+path(s) between two procedures. Optionally emit DOT/Mermaid. Flag scope-ambiguous edges
+separately rather than guessing.
+
+### 8. Dead-code & dangling-reference detection
+- **Orphans** — procedures that are defined but never called (dead-code / removal candidates).
+- **missing routines** — call sites whose target procedure is never defined anywhere in scope.
+- **missing modules** — `use` of a module that is never defined in the project.
+The latter two are genuine correctness signals (typos, broken refactors, build-order assumptions),
+not just hygiene. Falls straight out of the call/use graph once #7 exists.
+
+**Proposed:** `find_orphans(project_path)` and `find_dangling_references(project_path)`.
+
+### 9. USE hygiene & recursion sanity
+- **Duplicate `use`** of the same module within one scope, and **transitive/inherited `use` bloat**
+  (a module pulled in only because a parent or a called module exposed it) → tighten `only:` clauses.
+- **Recursion sanity**: flag procedures that call themselves but are not declared `recursive`, and
+  those declared `recursive` that never actually recurse.
+- **Keyword-name collisions**: entities named after Fortran keywords/intrinsics.
+- **Accessibility problems**: names in a `public`/`private` statement that are never defined.
+
+**Proposed:** fold into an expanded `audit_*` family (e.g. `audit_use_statements`,
+`audit_recursion`) or surface as additional `project_metrics` findings.
+
 ## Smaller / nice-to-have
 - `modernize_file` is rough on cpp-laced fixed-format source; preserve/handle `#`-preprocessor and
   fixed-format comment lines instead of mangling them.
