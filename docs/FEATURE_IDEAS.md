@@ -2,8 +2,56 @@
 
 Insights gathered from exercising fortran-mcp against a large, real-world modern-Fortran
 codebase (~490k LOC across ~390 free-form modules) during an architecture review and a
-test-harness build-out. Listed roughly in priority order. Each item notes the gap that was
-hit and a sketch of the proposed tool/enhancement.
+test-harness build-out. Each item notes the gap that was hit and a sketch of the proposed
+tool/enhancement. The numbered items (#1–#9) are **stable identifiers, not a ranking** — see
+**Prioritization & build order** below for the recommended sequence and the reasoning behind it.
+
+## Prioritization & build order
+
+The build order below was derived by weighing each *open* item on four axes:
+
+- **Use-case value × frequency.** The three target use cases (from the README), most- to
+  least-frequent: (1) the **AI authoring loop** — every session, already well-served by
+  `lint`/`compile`/`format`/`validate_syntax`, so marginal gains are smaller now; (2) **legacy
+  modernization** — high-value project campaigns, and where the richest *open* value sits;
+  (3) **audit / onboarding** a large codebase — valuable but occasional. Items serving #2 are
+  weighted up.
+- **Effort & risk.** Per-procedure analyses are tractable and high-confidence. Whole-program
+  analyses that need cross-module name/scope resolution are high-effort and ambiguity-prone:
+  fparser2 gives statement *structure* but **not symbol binding**, so resolving which definition
+  a given `call`/function-reference points to is hand-built (and inherently ambiguous through
+  generics, host association, and `use`-renaming).
+- **Enabling order.** Some items unblock others (e.g. #8 falls out of #7).
+- **Momentum.** Favor items that build directly on the just-adopted fparser2 AST, and prove that
+  pattern on a *contained* problem before the hard cross-module ones.
+
+Recommended sequence:
+
+**Tier 1 — build next:**
+1. **#6 Pure-candidate blocker reporting** — per-procedure (no cross-module resolution),
+   high-confidence on the AST, serves modernization; the cleanest proof that fparser2 beats regex.
+2. **Smaller: `modernize_file` cpp handling** — now cheap by reusing the `_preprocess_source`
+   helper built for `validate_syntax`; removes a rough edge on a core tool.
+
+**Tier 2 — high-value modernization leverage & safety:**
+3. **#5 Characterization-test scaffolding** — the safety net that makes refactoring trustworthy;
+   pairs with `verify_regression`; fparser2 supplies accurate signatures for codegen.
+4. **#4 Higher-signal `suggest_refactoring` detectors** — scope to the *new* levers
+   (pointer-to-global aliasing, string-keyed accessors); mutable-public-state and repeated
+   `SELECT CASE` arity are already partly covered by `dependency_graph` / `find_large_units`.
+
+**Tier 3 — ambitious whole-program graph (after #6 proves the AST-analysis pattern):**
+5. **#7 Call graph + call-path queries** — keystone for audit/onboard, but highest effort/risk.
+6. **#8 Dead-code & dangling references** — gated on #7; dangling-call detection also helps the
+   AI authoring loop (catches hallucinated calls).
+
+**Tier 4 — hygiene / fill-in:**
+7. **#9 USE hygiene & recursion sanity** — lower impact; partly leverages existing `dependency_graph`.
+8. Smaller items: FRUIT/Julienne scaffold (folds into #5); README directory-vs-file note.
+
+**Cross-cutting (opportunistic, not a standalone push):** migrate existing regex analysis tools
+(`dependency_graph`, `find_large_units`) onto fparser2 for accuracy as they're touched, keeping a
+regex fallback for files that fail to parse.
 
 ## Validated in real use
 - **`audit_implicit_interfaces`** surfaced hundreds of implicit-interface call sites across a
@@ -47,7 +95,7 @@ subroutine built around a ~80-way `SELECT CASE`). These had to be found by manua
 **Proposed:** `find_large_units(project_path)` reporting oversized procedures/modules by line
 count, `SELECT CASE` arity, and nesting depth — i.e., the decomposition targets.
 
-### 4. Higher-signal `suggest_refactoring` patterns
+### 4. Higher-signal `suggest_refactoring` patterns — ⏳ Tier 2
 The current matcher keys on COMMON/GOTO/select-case/external/long-params/C-interop. On already
 format-modern code the real levers are different. Add detectors for:
 - **module-level mutable public state** (global state) → encapsulate / `protected`;
@@ -58,7 +106,7 @@ format-modern code the real levers are different. Add detectors for:
 - **string-keyed field accessors** (`SELECT CASE(name)` returning a pointer to a field;
   reflection-by-string) → typed or enum-indexed access.
 
-### 5. Characterization-test scaffolding (refactor-safety)
+### 5. Characterization-test scaffolding (refactor-safety) — ⏳ Tier 2
 The reusable pattern for safe refactoring is: *init → call a routine → pin its current output*
 (a golden value + tolerance). `scaffold_unit_test` currently emits a bare program; add a
 **characterization** mode.
@@ -68,7 +116,7 @@ a test capturing the routine's current output and asserting it within tolerance,
 established framework (FRUIT or Julienne) rather than a bare `program`. Pairs naturally with the
 existing `verify_regression` (same idea at the binary level).
 
-### 6. Pure-candidate blocker reporting
+### 6. Pure-candidate blocker reporting — ⏳ Tier 1 (build next)
 `analyze_pure_candidates` answers "is it pure?"; the more actionable question during a
 purification effort is *why not*. Enhance it to name the specific blocker per procedure: I/O,
 write to global/module state, aliasing through module pointers, or a missing `intent`. (Converting
@@ -86,18 +134,21 @@ report, `find_large_units`, `project_metrics`); the items below are the gaps it 
 regex — that gives the same analyses with grammar-accurate scope/call resolution, and generically
 (not tied to any one project's directory conventions).
 
-### 7. Call graph + call-path queries (biggest gap)
+### 7. Call graph + call-path queries — ⏳ Tier 3
 We build the module **`use`** graph (`dependency_graph`) but not a **call** graph. Add per-procedure
 caller/callee edges and the ability to answer "what calls X", "what does X call", and "show the
 call path(s) from A to B". This is the single most-used capability of the reference tool and the
-keystone for impact analysis, refactor blast-radius, and understanding an unfamiliar codebase.
+keystone for impact analysis, refactor blast-radius, and understanding an unfamiliar codebase —
+the **biggest capability gap**, but deferred to Tier 3 because an accurate call graph requires
+cross-module symbol binding that fparser2 does not provide (highest effort/risk; best tackled
+after #6 proves the AST-analysis pattern).
 
 **Proposed:** `call_graph(project_path)` returning caller/callee edges per procedure (with fan-in/
 fan-out and recursion flags), and `call_paths(project_path, source, target)` returning the
 path(s) between two procedures. Optionally emit DOT/Mermaid. Flag scope-ambiguous edges
 separately rather than guessing.
 
-### 8. Dead-code & dangling-reference detection
+### 8. Dead-code & dangling-reference detection — ⏳ Tier 3 (gated on #7)
 - **Orphans** — procedures that are defined but never called (dead-code / removal candidates).
 - **missing routines** — call sites whose target procedure is never defined anywhere in scope.
 - **missing modules** — `use` of a module that is never defined in the project.
@@ -106,7 +157,7 @@ not just hygiene. Falls straight out of the call/use graph once #7 exists.
 
 **Proposed:** `find_orphans(project_path)` and `find_dangling_references(project_path)`.
 
-### 9. USE hygiene & recursion sanity
+### 9. USE hygiene & recursion sanity — ⏳ Tier 4
 - **Duplicate `use`** of the same module within one scope, and **transitive/inherited `use` bloat**
   (a module pulled in only because a parent or a called module exposed it) → tighten `only:` clauses.
 - **Recursion sanity**: flag procedures that call themselves but are not declared `recursive`, and
