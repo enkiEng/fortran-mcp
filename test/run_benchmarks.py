@@ -203,6 +203,49 @@ def main():
         print(f"  ❌ FAILURE testing new MCP tools: {str(e)}")
         failed = True
 
+    # ------------------------------------------------------------------
+    # [5] AST-backed syntax validation (fparser2)
+    # ------------------------------------------------------------------
+    print("\n--- [5] Running AST Syntax Validation (validate_syntax) ---")
+    try:
+        from fortran_mcp.server import validate_syntax, validate_syntax_file
+
+        # A clean modern file must validate.
+        clean = validate_syntax_file(os.path.join(current_dir, "modern_lmdif.f90"))
+        if clean.startswith("✅"):
+            print("  ✅ Clean F2018 file validated.")
+        else:
+            print(f"  ❌ Clean file unexpectedly failed: {clean}")
+            failed = True
+
+        # A legacy fixed-format F77 file must validate under the older grammar.
+        legacy = validate_syntax_file(os.path.join(current_dir, "lmdif.f"), fortran_version="f2003")
+        if legacy.startswith("✅"):
+            print("  ✅ Legacy F77 fixed-format file validated.")
+        else:
+            print(f"  ❌ Legacy F77 file unexpectedly failed: {legacy}")
+            failed = True
+
+        # Broken source must be reported as a syntax error with a line number.
+        broken = validate_syntax("module m\n  implicit none\n  integer :: i =\nend module m\n")
+        if broken.startswith("❌") and "line" in broken:
+            print("  ✅ Broken source correctly flagged with a line number.")
+        else:
+            print(f"  ❌ Broken source not flagged as expected: {broken}")
+            failed = True
+
+        # Unexpanded cpp macros must produce the preprocessing hint, not a silent pass.
+        cpp = validate_syntax('#include "x.h"\nsubroutine s()\n  SG_CHECKMEM("bad")\nend subroutine s\n')
+        if cpp.startswith("❌") and "preprocess" in cpp.lower():
+            print("  ✅ Unexpanded cpp macro flagged with preprocessing guidance.")
+        else:
+            print(f"  ❌ cpp macro case not handled as expected: {cpp}")
+            failed = True
+
+    except Exception as e:
+        print(f"  ❌ FAILURE testing validate_syntax: {str(e)}")
+        failed = True
+
     print("\n" + "=" * 60)
     if failed:
         print("   ❌ BENCHMARKS FAILED: Regression checks encountered errors.")

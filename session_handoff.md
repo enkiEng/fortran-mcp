@@ -21,6 +21,8 @@ Client agents use it to self-correct their code in a loop before presenting it t
 
 ## 📦 Release / Repo State
 - **Version:** 0.2.0 (`pyproject.toml`). Prior releases: 0.1.1, 0.1.0.
+- **Dependencies:** `fastmcp`, `fprettify`, `numpy`, and **`fparser`** (added for the AST-backed
+  `validate_syntax` tools — pure-Python, BSD-3, validated on Python 3.14).
 - **Branch:** `main`, clean, up to date with `origin/main`.
 - **PRs:** #1–#7 all MERGED. No open PRs. Only remote branch is `origin/main`.
 - **CI:** `.github/workflows/ci.yml` runs `test/run_benchmarks.py` on push/PR (Python 3.14 +
@@ -43,8 +45,8 @@ Client agents use it to self-correct their code in a loop before presenting it t
    * **Dummy-procedure filter:** excludes dummy procedures (`procedure(...)`) and `external`
      declarations from `missing_intent` checks (intents are illegal on procedures).
 
-2. **MCP Server Entrypoint ([server.py](src/fortran_mcp/server.py), ~3000 lines):**
-   Exposes **27 MCP tools**. Grouped:
+2. **MCP Server Entrypoint ([server.py](src/fortran_mcp/server.py), ~3200 lines):**
+   Exposes **26 MCP tools**. Grouped:
    * **Core:** `explain_best_practices`, `lint_code`, `lint_file`, `format_code`,
      `format_file`, `initialize_project`, `compile_project`, `run_tests`.
    * **Design / refactoring:** `suggest_design_pattern`, `suggest_refactoring`,
@@ -55,6 +57,14 @@ Client agents use it to self-correct their code in a loop before presenting it t
    * **Interop:** `generate_c_bindings`, `generate_python_interface`.
    * **Project-wide analysis (added in `afff5ba`):** `project_metrics`, `dependency_graph`,
      `find_large_units`.
+   * **AST syntax validation (fparser2):** `validate_syntax`, `validate_syntax_file` — a
+     build-free syntax gate backed by the fparser2 AST (distinct from `compile_project`: no
+     build system, no other modules needed). `validate_syntax_file` is **preprocess-aware**:
+     it auto-detects C-preprocessor directives and runs `gfortran -cpp -E -P` before parsing,
+     so cpp-macro-laced source (e.g. function-like macros that are not valid Fortran until
+     expanded) validates correctly.
+     Standard names are mapped onto fparser2's grammar ceiling (f2003 / partial-f2008);
+     `f2018`/`f2023` map to `f2008`.
    * `modernize_file` converts `.eq.`/`.le.` etc. to relational symbols, swaps `double
      precision` to parameterized kind constants, injects `iso_fortran_env`, and runs
      `fprettify`. `verify_regression` runs a legacy and a modernized binary and compares output
@@ -66,9 +76,10 @@ Client agents use it to self-correct their code in a loop before presenting it t
    **Object Sorting Problem** (generic polymorphic `comparable_t` interfaces, procedural
    callback pointers, and indirect index sorting). Resolved package-relative at runtime.
 
-4. **Test Suite ([test/](test/)):** `run_benchmarks.py` is the regression harness with four
+4. **Test Suite ([test/](test/)):** `run_benchmarks.py` is the regression harness with five
    sections — (1) linter benchmarks, (2) strict F2018 compiler verification, (3) interop binding
-   generation, (4) the new metrics/dependency/large-unit tools. Fixtures:
+   generation, (4) the metrics/dependency/large-unit tools, (5) AST syntax validation
+   (`validate_syntax`: clean-pass, legacy-F77-pass, broken-flagged, cpp-macro-hint). Fixtures:
    * [lmdif.f](test/lmdif.f): legacy F77 Levenberg-Marquardt solver (Netlib MINPACK), ~30 lint
      violations.
    * [modern_lmdif.f90](test/modern_lmdif.f90): fully modernized F2018 version (0 violations,
@@ -96,10 +107,16 @@ The live, prioritized backlog is now **[docs/FEATURE_IDEAS.md](docs/FEATURE_IDEA
 from exercising the server against a ~490k-LOC real codebase. Status:
 
 * ✅ **Done:** CI benchmark integration; FEATURE_IDEAS items 1–3 (`project_metrics`,
-  `dependency_graph`, `find_large_units`).
+  `dependency_graph`, `find_large_units`); **fparser2 AST backend evaluated + adopted** —
+  `validate_syntax`/`validate_syntax_file` shipped. Coverage spike against two large modern
+  codebases: fparser2 parsed **100%** of the first (~395 files / ~489k LOC) and, after
+  preprocessing, ~100% of the second (its only raw failures were unexpanded cpp macros, not
+  grammar-ceiling issues). This makes fparser2 the recommended **analysis** backend (not a
+  format-preserving rewriter — keep `modernize_file` on regex/fprettify).
 * ⏳ **Open (high value):**
   * **#6 Pure-candidate blocker reporting** — make `analyze_pure_candidates` report *why* a
     procedure isn't pure (I/O, global/module-state writes, pointer aliasing, missing `intent`).
+    **Best built on the new fparser2 AST** (blockers map to node types) rather than regex.
   * **#4 Higher-signal `suggest_refactoring` detectors** — module-level mutable public state,
     pointer-to-global aliasing, repeated `SELECT CASE` dispatch matrices, string-keyed field
     accessors.

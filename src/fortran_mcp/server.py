@@ -3031,6 +3031,217 @@ def find_large_units(project_path: str) -> str:
     ranked_units = sorted(large_units, key=lambda x: x["lines_total"], reverse=True)
     return json.dumps(ranked_units, indent=2)
 
+
+# ---------------------------------------------------------------------------
+# AST-backed syntax validation (fparser2)
+# ---------------------------------------------------------------------------
+
+# fparser2 supports only the 'f2003' and 'f2008' grammars. Map the broader set
+# of standard names agents use onto that ceiling. f2008 is a permissive superset
+# (submodules, coarrays, do concurrent, block, ...) and parses real-world modern
+# F2018 codebases cleanly, so it is the default.
+def _map_to_fparser_std(fortran_version: str) -> str:
+    v = (fortran_version or "").lower().strip().lstrip("f").replace("-", "").replace("_", "")
+    if v in ("2008", "2018", "2023", "18", "23", "08"):
+        return "f2008"
+    return "f2003"
+
+# Detect C-preprocessor directives that require a preprocessing pass before the
+# source is valid Fortran (e.g. function-like macros such as SG_CHECKMEM(...)).
+_CPP_DIRECTIVE_RX = re.compile(r"(?m)^\s*#\s*(include|define|if|ifdef|ifndef|else|elif|endif|undef|pragma)\b")
+
+def _detect_fixed_format(code: str) -> bool:
+    """Reuse the linter's heuristic: a 'C'/'c'/'*' comment in column 1 marks fixed-format."""
+    fixed_comment_rx = re.compile(r'^[Cc\*](?:\s|[^\w]|$)')
+    for line in code.splitlines()[:50]:
+        if fixed_comment_rx.match(line):
+            return True
+    return False
+
+def _preprocess_source(file_path: str, include_dirs: Optional[List[str]]) -> dict:
+    """Run a Fortran-aware C preprocessor (gfortran -cpp -E -P) over a file.
+
+    gfortran's preprocessor is used in preference to plain 'cpp' because it
+    tolerates Fortran tokens (e.g. empty string literals '') that trip cpp.
+    Returns {'ok': bool, 'text': str|None, 'error': str|None}.
+    """
+    gfortran = shutil.which("gfortran")
+    if not gfortran:
+        return {"ok": False, "text": None,
+                "error": "gfortran not found on PATH; cannot preprocess. Install gfortran or pass already-preprocessed source."}
+    cmd = [gfortran, "-cpp", "-E", "-P", "-I", os.path.dirname(os.path.abspath(file_path))]
+    for d in (include_dirs or []):
+        cmd += ["-I", d]
+    cmd.append(file_path)
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+    except Exception as e:
+        return {"ok": False, "text": None, "error": f"Error invoking gfortran preprocessor: {e}"}
+    if res.returncode != 0:
+        return {"ok": False, "text": None,
+                "error": f"Preprocessing failed (exit {res.returncode}):\n{res.stderr.strip()}"}
+    return {"ok": True, "text": res.stdout, "error": None}
+
+def _parse_fortran(code: str, fparser_std: str) -> dict:
+    """Parse a Fortran source string with fparser2. Returns a result dict with
+    'passed', and on failure 'line'/'snippet'/'message'."""
+    try:
+        from fparser.two.parser import ParserFactory
+        from fparser.common.readfortran import FortranStringReader
+        from fparser.common.sourceinfo import FortranFormat
+        from fparser.two.utils import FortranSyntaxError, walk
+        from fparser.two import Fortran2003 as F
+    except ImportError as e:
+        return {"passed": False, "error": f"fparser is not installed ({e}). Add 'fparser' to the environment."}
+
+    try:
+        reader = FortranStringReader(code, ignore_comments=True)
+        # Tell the reader the layout explicitly; FortranStringReader defaults to
+        # free-format, so fixed-format (F77) source must be flagged or it fails.
+        reader.set_format(FortranFormat(not _detect_fixed_format(code), False))
+        tree = ParserFactory().create(std=fparser_std)(reader)
+    except FortranSyntaxError as e:
+        msg = str(e)
+        m = re.search(r"at line (\d+)", msg)
+        line = int(m.group(1)) if m else None
+        snippet = ""
+        for part in msg.split("\n"):
+            if part.strip().startswith(">>>"):
+                snippet = part.replace(">>>", "").strip()
+                break
+        return {"passed": False, "syntax_error": True, "line": line,
+                "snippet": snippet, "message": msg.strip()}
+    except Exception as e:
+        return {"passed": False, "error": f"{type(e).__name__}: {e}"}
+
+    # Light structural summary so a passing result is also informative.
+    try:
+        summary = {
+            "modules": len(walk(tree, F.Module)),
+            "subroutines": len(walk(tree, F.Subroutine_Subprogram)),
+            "functions": len(walk(tree, F.Function_Subprogram)),
+        }
+    except Exception:
+        summary = {}
+    return {"passed": True, "summary": summary}
+
+
+@mcp.tool()
+def validate_syntax(code: str, fortran_version: str = "f2018") -> str:
+    """Validate that a string of Fortran is syntactically parseable, using the fparser2 AST.
+
+    This is a fast, build-free syntax gate distinct from compile_project: it needs no
+    build system and no other modules present, making it ideal for a tight self-correction
+    loop. Note fparser2's grammar ceiling is Fortran 2003 + partial 2008, so newer/exotic
+    F2018 constructs may report as syntax errors even when valid.
+
+    Args:
+        code: The Fortran source to validate.
+        fortran_version: Standard hint (e.g. 'f2003', 'f2008', 'f2018'). Mapped onto
+            fparser2's supported grammars ('f2003'/'f2008'); defaults to 'f2018' -> f2008.
+    """
+    std = _map_to_fparser_std(fortran_version)
+    has_cpp = bool(_CPP_DIRECTIVE_RX.search(code))
+    result = _parse_fortran(code, std)
+
+    if result.get("passed"):
+        s = result.get("summary", {})
+        extra = ""
+        if s:
+            extra = f" ({s.get('modules',0)} module(s), {s.get('subroutines',0)} subroutine(s), {s.get('functions',0)} function(s))"
+        return f"✅ Syntax OK (parsed with fparser2 std={std}){extra}."
+
+    if result.get("error"):
+        return f"⚠️ Could not validate: {result['error']}"
+
+    # Syntax error path.
+    loc = f" at line {result['line']}" if result.get("line") else ""
+    lines = [f"❌ Syntax error{loc} (fparser2 std={std}):"]
+    if result.get("snippet"):
+        lines.append(f"  >>> {result['snippet']}")
+    if has_cpp:
+        lines.append("")
+        lines.append("Note: this source contains C-preprocessor directives (#include/#define/...). "
+                     "fparser2 does not expand macros, so the failure may be an unexpanded macro rather "
+                     "than a real syntax error. Use validate_syntax_file(..., preprocess='auto') to "
+                     "preprocess first.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def validate_syntax_file(
+    file_path: str,
+    fortran_version: str = "f2018",
+    preprocess: str = "auto",
+    include_dirs: Optional[List[str]] = None,
+) -> str:
+    """Validate a Fortran source file's syntax using the fparser2 AST, preprocessing if needed.
+
+    A build-free syntax gate (see validate_syntax). Many real codebases rely on C-preprocessor
+    macros (e.g. function-like macros that are not valid Fortran until expanded); this tool can
+    run a Fortran-aware preprocessor (gfortran -cpp -E -P) before parsing so those files validate.
+
+    Args:
+        file_path: Path to the Fortran file (.f90, .f, .F90, ...).
+        fortran_version: Standard hint; mapped onto fparser2's 'f2003'/'f2008' (default f2018 -> f2008).
+        preprocess: 'auto' (preprocess only if cpp directives are detected), 'always', or 'never'.
+        include_dirs: Extra '-I' include directories for the preprocessor (the file's own
+            directory is always included).
+    """
+    if not os.path.exists(file_path):
+        return f"Error: File not found at path: {file_path}"
+
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            raw = f.read()
+    except Exception as e:
+        return f"Error reading file '{file_path}': {str(e)}"
+
+    std = _map_to_fparser_std(fortran_version)
+    has_cpp = bool(_CPP_DIRECTIVE_RX.search(raw))
+    do_pp = preprocess == "always" or (preprocess == "auto" and has_cpp)
+
+    code = raw
+    pp_note = ""
+    if do_pp:
+        pp = _preprocess_source(file_path, include_dirs)
+        if pp["ok"]:
+            code = pp["text"]
+            pp_note = " (preprocessed)"
+        else:
+            # If preprocessing was only auto-triggered, fall through to a raw parse but
+            # surface the preprocessing failure so the agent can act on it.
+            if preprocess == "always":
+                return f"⚠️ Preprocessing required but failed for '{os.path.basename(file_path)}':\n{pp['error']}"
+            pp_note = f" (preprocessing attempted but failed: {pp['error']})"
+
+    result = _parse_fortran(code, std)
+
+    if result.get("passed"):
+        s = result.get("summary", {})
+        extra = ""
+        if s:
+            extra = f" ({s.get('modules',0)} module(s), {s.get('subroutines',0)} subroutine(s), {s.get('functions',0)} function(s))"
+        return f"✅ {os.path.basename(file_path)}: Syntax OK (fparser2 std={std}{pp_note}){extra}."
+
+    if result.get("error"):
+        return f"⚠️ {os.path.basename(file_path)}: Could not validate: {result['error']}"
+
+    loc = f" at line {result['line']}" if result.get("line") else ""
+    lines = [f"❌ {os.path.basename(file_path)}: Syntax error{loc} (fparser2 std={std}{pp_note}):"]
+    if result.get("snippet"):
+        lines.append(f"  >>> {result['snippet']}")
+    if has_cpp and not do_pp:
+        lines.append("")
+        lines.append("Note: this file contains C-preprocessor directives but was not preprocessed. "
+                     "Re-run with preprocess='auto' or 'always' to expand macros before validating.")
+    elif has_cpp and do_pp and result.get("snippet"):
+        lines.append("")
+        lines.append("This failure is after preprocessing, so it is likely a genuine syntax error "
+                     "(or a construct beyond fparser2's F2003/F2008 grammar).")
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     mcp.run()
 

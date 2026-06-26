@@ -15,18 +15,55 @@ This MCP server equips AI agents (in Cursor, Claude Desktop, or Antigravity CLI)
 
 ---
 
-## 🛠️ Features
+## 🔁 How It Works
 
-* **Legacy Linter:** Scans code for obsolete type notations, missing intents, missing `implicit none` units, fixed-format layouts, and deprecated statements.
-* **Auto-Formatter:** Connects directly to `fprettify` to cleanly indent and format Fortran code.
-* **Strict Compiler Verification:** Triggers compilation checks using `gfortran` or `fpm` with strict diagnostic flags (`-Wall -Wextra -Wimplicit-interface -fcheck=all -std=f2018`).
-* **Boilerplate Initializer:** Sets up standard modular layouts (supporting both `fpm` or standard Makefiles) with modern syntax, intents, and testing templates.
-* **Design Patterns Database:** Serves architectural blueprints and code templates for:
-  * **OOP:** Classes, inheritance, polymorphism, and deferred bindings.
-  * **Generics:** Function/operator overloading using generic interfaces.
-  * **RAII:** Automated resource cleanups using `allocatable`.
-  * **Callbacks:** Strategy pattern using abstract interfaces and procedure pointers.
-  * **C-Interop:** Interfacing standard C and Python bindings using `iso_c_binding`.
+**You don't call these tools yourself — your AI assistant does, automatically.** This is a *server your AI talks to* — not a CLI you run, not a library you import.
+
+1. **Install it once** into your MCP-capable AI host (Claude Desktop, Cursor, or Antigravity CLI — see **Setup & Connection** below).
+2. **Work with your AI as you normally would** — ask it to write a new module, modernize a legacy routine, or review a file.
+3. **Behind the scenes, the AI uses these tools to check its own work** — it lints, compiles, and formats what it just wrote, reads the diagnostics, and fixes its own mistakes *before* showing you the result.
+
+The net effect: you get modern, standards-compliant Fortran instead of "AI Slop," without hand-correcting the model's output.
+
+## 👥 Who It's For
+
+* **Engineers pairing with an AI on Fortran** who want generated code to follow F2003/F2018 standards out of the box.
+* **Teams modernizing legacy F77/F90 code** — convert fixed-format layouts, `common` blocks, and obsolete types into modular, intent-checked modern Fortran, with regression checks to prove behavior didn't change.
+* **Anyone auditing or onboarding onto a large codebase** — get project-wide modernization metrics, a module dependency graph, and oversized "god-file" hot spots to see what needs attention first.
+
+---
+
+## 🛠️ What It Does (Tool Catalog)
+
+The server exposes **26 MCP tools** the AI can call, grouped by purpose:
+
+**Author & verify**
+* `explain_best_practices` — the modern-Fortran style guide the agent is told to follow.
+* `lint_code` / `lint_file` — static analysis for obsolete types, missing `intent`, missing `implicit none`, fixed-format layout, and deprecated statements.
+* `format_code` / `format_file` — clean indentation and formatting via `fprettify`.
+* `compile_project` — strict `gfortran`/`fpm` compilation (`-Wall -Wextra -Wimplicit-interface -fcheck=all -std=f2018`).
+* `run_tests` — runs the project's `fpm`/`make` test suite.
+* `validate_syntax` / `validate_syntax_file` — fast, build-free syntax check via the fparser2 AST; preprocess-aware for source laced with C-preprocessor macros.
+* `initialize_project` — scaffolds a modern modular project (fpm or Makefile layout) with intents and test templates.
+
+**Modernize & refactor**
+* `modernize_file` — converts F77 idioms (`.eq.` → `==`, `double precision` → parameterized kinds, injects `iso_fortran_env`) and reformats.
+* `verify_regression` — runs legacy vs. modernized binaries and compares output + exit status to prove no behavior change.
+* `convert_common_to_module` — turns global `common` blocks into module-scoped state.
+* `rename_legacy_identifiers` — safe, scoped identifier renaming.
+* `analyze_pure_candidates` — finds procedures that could become `pure`.
+* `audit_implicit_interfaces` — flags call sites that lack explicit interfaces.
+* `suggest_refactoring` / `suggest_refactoring_file` — recommends idiomatic restructurings.
+* `suggest_design_pattern` — serves architectural blueprints and code templates: **OOP** (classes, inheritance, polymorphism, deferred bindings), **Generics** (interface overloading), **RAII** (`allocatable` cleanup), **Callbacks** (Strategy via abstract interfaces / procedure pointers), and **C-Interop** (`iso_c_binding`).
+
+**Understand a codebase**
+* `project_metrics` — per-file and aggregate modernization scores and legacy-feature counts.
+* `dependency_graph` — module `use` graph with fan-in/fan-out, keystone modules, and mutable-global-state detection.
+* `find_large_units` — oversized procedures/modules ranked by length, nesting, and `select case` arity.
+
+**Scaffold & interoperate**
+* `scaffold_unit_test` / `scaffold_hpc_grid` — unit-test and HPC grid boilerplate.
+* `generate_c_bindings` / `generate_python_interface` — `iso_c_binding` C bindings and Python (ctypes/numpy) interfaces.
 
 ---
 
@@ -37,14 +74,18 @@ fortran-mcp/
 ├── pyproject.toml              # Python project configuration & dependencies
 ├── README.md                   # Project overview & documentation
 ├── session_handoff.md          # Context handoff for AI agents
+├── docs/
+│   └── FEATURE_IDEAS.md        # Prioritized backlog from large-codebase field use
 ├── src/
 │   └── fortran_mcp/
 │       ├── __init__.py
-│       ├── linter.py           # Custom Fortran Linter engine
-│       └── server.py           # FastMCP tools definitions and entrypoint
+│       ├── linter.py           # Custom Fortran linter engine
+│       ├── design_patterns.md  # Design-pattern blueprints served by the server
+│       └── server.py           # FastMCP tool definitions and entrypoint
 ├── test/                       # Demonstration and verification test suite
 │   ├── unformatted_legacy.f90  # Non-compliant Fortran demonstration file
 │   ├── modern_compliant.f90    # Formatted, best-practice compliant Fortran file
+│   ├── run_benchmarks.py       # Regression & benchmark harness (run in CI)
 │   ├── illustrate_mcp_tools.py # Python script orchestrating the MCP tool calls
 │   └── README.md               # Test runner documentation
 └── dist/                       # Packaged python distributions (tar/wheel)

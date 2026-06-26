@@ -330,10 +330,11 @@ server = [
 
 [[package]]
 name = "fortran-mcp"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
+    { name = "fparser" },
     { name = "fprettify" },
     { name = "numpy" },
 ]
@@ -341,8 +342,18 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = ">=3.3.1" },
+    { name = "fparser", specifier = ">=0.2.0" },
     { name = "fprettify", specifier = ">=0.3.7" },
     { name = "numpy", specifier = ">=1.20.0" },
+]
+
+[[package]]
+name = "fparser"
+version = "0.2.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/22/ad643bd29377f011e97a6a2a8941b9121fdbd9e970effcf25744d6d1285e/fparser-0.2.3.tar.gz", hash = "sha256:c61d12dd4e1ee5aec35855431378ac16826362e4b22359a3a2ec9d5efc981333", size = 446295, upload-time = "2026-06-11T13:02:50.097Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f4/4a/5da454cebd00f77c5022d164428bdd2d0fdc1e1b8076a3ed98a501ed5ed8/fparser-0.2.3-py3-none-any.whl", hash = "sha256:c0ec023745e9249d0ec7948895ffe87ef2aa0d29d5e81f8516c029994be3a71c", size = 654747, upload-time = "2026-06-11T13:02:48.566Z" },
 ]
 
 [[package]]
